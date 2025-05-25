@@ -8,6 +8,7 @@ class ChessEnv:
            self.board = chess.Board()
            self.agent_color = agent_color
            self._init_render()
+           self.selected_square = None
 
 
     def _init_render(self):
@@ -89,12 +90,23 @@ class ChessEnv:
         return state 
 
 
-    def legal_actions(self):
+    def legal_actions(self): # 가능한 움직임 반환
          return list(self.board.legal_moves)
     
 
     def render(self):
         self.screen.blit(self.board_background, (0, 0))  # 배경 보드 그리기
+
+        # 선택된 칸 어둡게 (highlight)
+        if self.selected_square is not None:
+            row = 7 - (self.selected_square // 8)
+            col = self.selected_square % 8
+            highlight = pygame.Surface((self.SQUARE_SIZE, self.SQUARE_SIZE))
+            highlight.set_alpha(100)  # 투명도 조절
+            highlight.fill((50, 50, 50))  # 어두운 회색
+            self.screen.blit(highlight, (col * self.SQUARE_SIZE, row * self.SQUARE_SIZE))
+
+        # 말 그리기
         for square in chess.SQUARES:
             piece = self.board.piece_at(square)
             if piece:
@@ -103,5 +115,6 @@ class ChessEnv:
                 key = ('w' if piece.color else 'b') + piece.symbol().lower()
                 image = self.piece_images[key]
                 self.screen.blit(image, (col * self.SQUARE_SIZE, row * self.SQUARE_SIZE))
+
         pygame.display.flip()
         self.clock.tick(60)
