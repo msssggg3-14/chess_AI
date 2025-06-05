@@ -3,32 +3,43 @@ import time
 import numpy as np
 import chess.engine
 from chess_env import ChessEnv
+from train_agent import DQNAgent, uci_to_index, index_to_uci
+import torch
 
-# ====================
-# 설정
-# ====================
-MODE = "human_vs_stockfish"  # "human_vs_ai", "ai_vs_stockfish", "human_vs_stockfish"
+MODE = "human_vs_ai"
 STOCKFISH_PATH = r"stockfish\stockfish-windows-x86-64-avx2.exe"
+STOCKFISH_RATING = 400  # chess.com 기반 스톡피쉬 난이도 설정
 AI_THINK_TIME = 0.1
+MODEL_PATH = "train_data/dqn_chess_ep77000.pt"
 
-# ====================
-# 에이전트 정의 (랜덤)
-# ====================
-def my_ai_move(board):
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+def rating_to_skill_level(rating):
+    return min(20, max(0, (rating - 400) // 80))
+
+def load_model(path):
+    model = DQNAgent().to(device)
+    model.load_state_dict(torch.load(path))
+    model.eval()
+    return model
+
+model = load_model(MODEL_PATH)
+
+def my_ai_move(board, state):
+    state_tensor = torch.FloatTensor(state).permute(2, 0, 1).unsqueeze(0).to(device)
+    with torch.no_grad():
+        q_values = model(state_tensor)[0].cpu().numpy()
+
     legal_moves = list(board.legal_moves)
-    move = np.random.choice(legal_moves)
-    print(f"My AI plays: {move}")
-    return move.uci()
-
-def stockfish_move(board, engine):
-    result = engine.play(board, chess.engine.Limit(time=AI_THINK_TIME))
-    print(f"Stockfish plays: {result.move}")
-    return result.move.uci()
+    legal_indices = [uci_to_index[m.uci()] for m in legal_moves if m.uci() in uci_to_index]
+    masked_q = np.full_like(q_values, -np.inf)
+    masked_q[legal_indices] = q_values[legal_indices]
+    return index_to_uci[np.argmax(masked_q)]
 
 def get_mouse_move(board, env):
     stack = []
     while True:
-        env.render()  # 계속 그려줘야 하이라이트가 보임
+        env.render()
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit(); exit()
@@ -44,13 +55,18 @@ def get_mouse_move(board, env):
 
                 elif len(stack) == 2:
                     move = chess.Move(stack[0], stack[1])
+                    if (
+                        board.piece_at(stack[0]) is not None and
+                        board.piece_at(stack[0]).piece_type == chess.PAWN and
+                        chess.square_rank(stack[1]) in [0, 7]
+                    ):
+                        move = chess.Move(stack[0], stack[1], promotion=chess.QUEEN)
+
                     if move in board.legal_moves:
                         env.selected_square = None
                         return move.uci()
                     else:
                         print("Illegal move")
-
-                        # 목적지 칸에 기물이 있으면 → 새 선택으로 간주
                         if board.piece_at(stack[1]):
                             stack = [stack[1]]
                             env.selected_square = stack[0]
@@ -58,44 +74,22 @@ def get_mouse_move(board, env):
                             stack = []
                             env.selected_square = None
 
-
-
-
-# ====================
-# 메인 게임 루프
-# ====================
 def main():
     env = ChessEnv()
     env.reset()
-    engine = None
-    if "stockfish" in MODE:
-        engine = chess.engine.SimpleEngine.popen_uci(STOCKFISH_PATH)
-
     done = False
     env.render()
     time.sleep(1)
 
     while not done:
-        turn = env.board.turn  # True = white
+        turn = env.board.turn
 
         if MODE == "human_vs_ai":
             if turn == chess.WHITE:
                 action = get_mouse_move(env.board, env)
             else:
-                action = my_ai_move(env.board)
-
-        elif MODE == "ai_vs_stockfish":
-            if turn == chess.WHITE:
-                action = my_ai_move(env.board)
-            else:
-                action = stockfish_move(env.board, engine)
-
-        elif MODE == "human_vs_stockfish":
-            if turn == chess.WHITE:
-                action = get_mouse_move(env.board, env)
-            else:
-                action = stockfish_move(env.board, engine)
-
+                action = my_ai_move(env.board, env.get_state())
+                print(f"AI plays: {action}")
         else:
             print("Unknown mode.")
             break
@@ -105,8 +99,6 @@ def main():
         time.sleep(0.3)
 
     print("게임 종료")
-    if engine:
-        engine.quit()
 
 if __name__ == "__main__":
     main()

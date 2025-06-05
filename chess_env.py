@@ -2,111 +2,114 @@ import chess
 import numpy as np
 import pygame
 
-
 class ChessEnv:
-    def __init__(self, agent_color = chess.WHITE):
-           self.board = chess.Board()
-           self.agent_color = agent_color
-           self._init_render()
-           self.selected_square = None
-
+    def __init__(self, agent_color=chess.WHITE, render=True):
+        self.board = chess.Board()
+        self.agent_color = agent_color
+        self.render_enabled = render
+        self.selected_square = None
+        if render:
+            self._init_render()
 
     def _init_render(self):
-        # 사이즈
         self.WIDTH, self.HEIGHT = 640, 640
         self.SQUARE_SIZE = self.WIDTH // 8
 
-        # pygame 초기화
         pygame.init()
         self.screen = pygame.display.set_mode((self.WIDTH, self.HEIGHT))
         pygame.display.set_caption("C-H-E-E-S")
         self.clock = pygame.time.Clock()
 
-        # 보드 이미지 불러오기
         self.board_background = pygame.image.load("chess_img/board.png")
         self.board_background = pygame.transform.scale(self.board_background, (self.WIDTH, self.HEIGHT))
 
-        # 말 이미지 불러오기
         self.piece_images = {}
         pieces = ['p', 'r', 'n', 'b', 'q', 'k']
         for piece in pieces:
             self.piece_images['w' + piece] = pygame.image.load(f'chess_img/w{piece}.png')
-            self.piece_images['b' + piece] = pygame.image.load(f'chess_img/b{piece}.png')   
-    
+            self.piece_images['b' + piece] = pygame.image.load(f'chess_img/b{piece}.png')
 
     def reset(self, agent_color=chess.WHITE):
         if agent_color is not None:
             self.agent_color = agent_color
         self.board.reset()
-        return self.get_state()  
-    
+        return self.get_state()
 
     def step(self, action):
-        
         reward = 0
         done = False
+        # promotion 체크 전에 move 먼저 만들고
         move = chess.Move.from_uci(action)
-        # 움직임 구현현
+
+        # 자동 프로모션 로직 수행
+        if (
+            move.promotion is None and
+            self.board.piece_at(move.from_square) is not None and
+            self.board.piece_at(move.from_square).piece_type == chess.PAWN and
+            chess.square_rank(move.to_square) in [0, 7]
+        ):
+            move = chess.Move(move.from_square, move.to_square, promotion=chess.QUEEN)
+            action = move.uci()
+
+
+
         if move in self.board.legal_moves:
             self.board.push(move)
-        else : 
-            reward = -1
-            done = True
-        
-        # 체스판 상태 확인 밑 점수 부여 
+        else:
+            reward = -100
+            return self.get_state(), reward, False, {"illegal": True}
+
         if self.board.is_checkmate():
             if self.board.turn == self.agent_color:
-                reward -= 1; done = True
+                reward -= 200
             else:
-                reward += 1; done = True
+                reward += 300
+            done = True
 
         elif self.board.is_stalemate():
             print("스테일메이트입니다.")
-            #reward += 0
             done = True
 
         elif self.board.is_check():
             print("현재 체크 상태입니다.")
-        
+
         info = {
             "turn": self.board.turn,
             "is_check": self.board.is_check(),
             "is_checkmate": self.board.is_checkmate()
-               }
+        }
 
         return self.get_state(), reward, done, info
 
-
-    def get_state(self): # 보드를 읽어서 8,8,12 넘파이 배열로 반환환
-        state = np.zeros((8,8,12), dtype=np.uint8)
+    def get_state(self):
+        state = np.zeros((8, 8, 12), dtype=np.uint8)
         pieces = 'prnbqkPRNBQK'
-        for sqares in chess.SQUARES:
-            piece = self.board.piece_at(sqares)
-            if piece :
-                row = 7 - (sqares // 8)
-                col = sqares % 8
+        for sq in chess.SQUARES:
+            piece = self.board.piece_at(sq)
+            if piece:
+                row = 7 - (sq // 8)
+                col = sq % 8
                 channel = pieces.find(str(piece))
                 state[row][col][channel] = 1
-        return state 
+        return state
 
-
-    def legal_actions(self): # 가능한 움직임 반환
-         return list(self.board.legal_moves)
-    
+    def legal_actions(self):
+        return list(self.board.legal_moves)
 
     def render(self):
-        self.screen.blit(self.board_background, (0, 0))  # 배경 보드 그리기
+        if not self.render_enabled:
+            return
 
-        # 선택된 칸 어둡게 (highlight)
+        self.screen.blit(self.board_background, (0, 0))
+
         if self.selected_square is not None:
             row = 7 - (self.selected_square // 8)
             col = self.selected_square % 8
             highlight = pygame.Surface((self.SQUARE_SIZE, self.SQUARE_SIZE))
-            highlight.set_alpha(100)  # 투명도 조절
-            highlight.fill((50, 50, 50))  # 어두운 회색
+            highlight.set_alpha(100)
+            highlight.fill((50, 50, 50))
             self.screen.blit(highlight, (col * self.SQUARE_SIZE, row * self.SQUARE_SIZE))
 
-        # 말 그리기
         for square in chess.SQUARES:
             piece = self.board.piece_at(square)
             if piece:
